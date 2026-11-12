@@ -67,7 +67,7 @@ Before you start building, verify that your local machine and Snowflake account 
 - Access to a [Snowflake account](https://signup.snowflake.com/?utm_source=snowflake-devrel&utm_medium=developer-guides&utm_cta=developer-guides)
 - A Snowflake role that can read `SNOWFLAKE_SAMPLE_DATA`, use a warehouse, and create tables, views, stages, and semantic views in a target schema (`CREATE SEMANTIC VIEW` on the schema, `SELECT` on each source table, and `OWNERSHIP` of an existing semantic view with the same name when replacing it)
 - Python 3.12 installed locally (tested with `uv`; standard `venv` also works)
-- Only two Python packages: `dbt-core==1.12.6` and `dbt-snowflake==1.12.3` (MetricFlow `0.213.0` is installed automatically; no separate Ossie package or converter is needed)
+- Only two Python packages: `dbt-core==1.12.6` and `dbt-snowflake==1.12.5` (MetricFlow `0.213.0` is installed automatically; no separate Ossie package or converter is needed)
 
 Once you have those prerequisites ready, you can set up the target schema in Snowflake and scaffold the local dbt project.
 
@@ -104,7 +104,7 @@ cat << 'EOF' > requirements.txt
 # that parse requires for a snowflake profile, and it builds the tables and runs the publish macro.
 # No Apache Ossie package or converter is needed on this path.
 dbt-core==1.12.6
-dbt-snowflake==1.12.3
+dbt-snowflake==1.12.5
 EOF
 
 cat << 'EOF' > dbt_project.yml
@@ -393,7 +393,7 @@ export SNOWFLAKE_SCHEMA=DEMO             # default
 
 If you prefer standard `venv` instead of `uv`, run `python3.12 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt`.
 
-**Check:** Run `dbt --version` and confirm that `dbt-core` `1.12.6` and `dbt-snowflake` `1.12.3` are active.
+**Check:** Run `dbt --version` and confirm that `dbt-core` `1.12.6` and `dbt-snowflake` `1.12.5` are active.
 
 Now that the environment is configured, let's examine how the staging layer prepares the raw TPC-H tables.
 
