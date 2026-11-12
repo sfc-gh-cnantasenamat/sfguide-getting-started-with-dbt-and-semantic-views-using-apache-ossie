@@ -23,19 +23,6 @@ When a data engineering team defines metrics like `total_revenue`, `revenue_per_
 
 Suppose you ask for the top five product brands in the `BUILDING` market segment by total revenue, revenue per item, and distinct products sold. In this guide, you build a star schema over the `SNOWFLAKE_SAMPLE_DATA.TPCH_SF1` dataset in dbt (`fct_order_items`, `dim_customers`, and `dim_products`), declare four metrics in `models/marts/_semantic_models.yml`, and run `dbt build` so dbt both materializes the tables in Snowflake and writes `target/osi_document.json`. You then run a single dbt macro (`publish_semantic_view`) that uploads `target/osi_document.json` to a temporary Snowflake stage and calls `SYSTEM$CREATE_SEMANTIC_VIEW_FROM_OSSIE_YAML` to publish `ANALYTICS.DEMO.SV_ORDERS`. Querying `SV_ORDERS` with `AGG(total_revenue)` and `AGG(products_sold)` returns `Brand#52` at the top with `165,202,705.9201` in total revenue and `3,458` products sold, matching the underlying tables without duplicating a single metric definition.
 
-```text
-SNOWFLAKE_SAMPLE_DATA.TPCH_SF1
-        |  dbt build
-        v
-<db>.<schema>: fct_order_items, dim_customers, dim_products
-        |  dbt parse
-        v
-target/osi_document.json            (Ossie spec 0.1.1, written by dbt-core)
-        |  dbt run-operation publish_semantic_view
-        v
-SYSTEM$CREATE_SEMANTIC_VIEW_FROM_OSSIE_YAML  -->  semantic view  -->  plain SQL
-```
-
 With the end-to-end flow in place, here is what you will learn along the way.
 
 ### What You'll Learn
@@ -51,6 +38,8 @@ Those learning goals map directly to the objects you will create in your environ
 ### What You'll Build
 
 By the end of this guide, you will have a working `quickstart-dbt-snowflake-ossie` dbt project and the following Snowflake objects in `ANALYTICS.DEMO`:
+
+![Architecture diagram of the dbt to Snowflake Semantic View pipeline using Apache Ossie](assets/architecture-diagram.png)
 
 | Path or Object | Role in the Pipeline |
 |---|---|

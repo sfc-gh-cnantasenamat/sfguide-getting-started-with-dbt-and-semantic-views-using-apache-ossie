@@ -1,0 +1,220 @@
+"""Render architecture-diagram.png for the guide.
+
+Run from the assets folder:  python3 architecture_diagram.py
+"""
+
+import math
+
+import matplotlib.pyplot as plt
+from matplotlib.lines import Line2D
+from matplotlib.patches import FancyArrowPatch, FancyBboxPatch
+from matplotlib.transforms import Bbox
+
+# Object type -> (fill, edge). Add types as needed; the legend shows only types used.
+STYLE = {
+    "Source Table (TPCH_SF1)": ("#E0E0E0", "#616161"),
+    "Staging View":            ("#E1F5FE", "#0288D1"),
+    "Mart Table":              ("#B2EBF2", "#0097A7"),
+    "Ossie Document":          ("#FFE0B2", "#F57C00"),
+    "Stored Procedure":        ("#F8BBD0", "#C2185B"),
+    "Semantic View":           ("#D1C4E9", "#5E35B1"),
+}
+
+PAD_PX = 28     # padding between text and box border, equal on all four sides
+GAP_PX = 6      # gap between title and subtitle
+LABEL_CLEAR_PX = 6  # minimum gap between an edge label and any box
+
+# key: (x, y, type, title, subtitle)
+NODES = {
+    "src_orders": (2.2, 6.9, "Source Table (TPCH_SF1)", "ORDERS & LINEITEM", "Shared TPC-H orders\n& line items"),
+    "src_cust":   (2.2, 4.4, "Source Table (TPCH_SF1)", "CUSTOMER & NATION", "Shared TPC-H customers\n& nations"),
+    "src_part":   (2.2, 1.9, "Source Table (TPCH_SF1)", "PART", "Shared TPC-H\nproduct catalog"),
+    "stg_orders": (7.4, 6.9, "Staging View", "STG_ORDERS & STG_LINEITEM", "Orders >= 1998-01-01\n& renamed columns"),
+    "stg_cust":   (7.4, 4.4, "Staging View", "STG_CUSTOMERS", "Joins customer\nwith nation"),
+    "stg_prod":   (7.4, 1.9, "Staging View", "STG_PRODUCTS", "Part keys, brands\n& product types"),
+    "fct_items":  (12.8, 6.9, "Mart Table", "FCT_ORDER_ITEMS", "Order-item grain & net_revenue\n(+ METRICFLOW_TIME_SPINE)"),
+    "dim_cust":   (12.8, 4.4, "Mart Table", "DIM_CUSTOMERS", "Primary key: customer_key\nDimension: market_segment"),
+    "dim_prod":   (12.8, 1.9, "Mart Table", "DIM_PRODUCTS", "Primary key: part_key\nDimension: brand"),
+    "osi_doc":    (18.4, 4.4, "Ossie Document", "OSI_DOCUMENT.JSON", "Ossie 0.1.1 from _semantic_models.yml\nPUT to @OSSIE_PUBLISH"),
+    "sys_proc":   (24.0, 4.4, "Stored Procedure", "SYSTEM$CREATE_SEMANTIC_VIEW\n_FROM_OSSIE_YAML", "Reads staged JSON &\npublishes semantic view"),
+    "sv_orders":  (24.0, 6.9, "Semantic View", "SV_ORDERS", "total_revenue, item_count,\nrevenue_per_item, products_sold"),
+}
+
+# (src, dst, label, color, dashed, rad)
+EDGES = [
+    ("src_orders", "stg_orders", "SELECT", "#0288D1", False, 0.0),
+    ("src_cust", "stg_cust", "SELECT", "#0288D1", False, 0.0),
+    ("src_part", "stg_prod", "SELECT", "#0288D1", False, 0.0),
+    ("stg_orders", "fct_items", "dbt build\n(JOIN)", "#0097A7", False, 0.0),
+    ("stg_cust", "dim_cust", "dbt build", "#0097A7", False, 0.0),
+    ("stg_prod", "dim_prod", "dbt build", "#0097A7", False, 0.0),
+    ("fct_items", "osi_doc", "dbt parse\n(order_items)", "#F57C00", True, 0.0),
+    ("dim_cust", "osi_doc", "dbt parse\n(customers)", "#F57C00", True, 0.0),
+    ("dim_prod", "osi_doc", "dbt parse\n(products)", "#F57C00", True, 0.0),
+    ("osi_doc", "sys_proc", "PUT & CALL\n(macro)", "#C2185B", False, 0.0),
+    ("sys_proc", "sv_orders", "CREATE\nSEMANTIC VIEW", "#C2185B", False, 0.0),
+    ("sv_orders", "fct_items", "AGG() SQL queries", "#5E35B1", True, 0.0),
+]
+
+fig, ax = plt.subplots(figsize=(21.0, 7.6), dpi=160)
+ax.set_xlim(0.1, 26.4)
+ax.set_ylim(1.1, 7.7)
+ax.axis("off")
+renderer = fig.canvas.get_renderer()
+to_data = ax.transData.inverted()
+
+
+def px_to_data(dx, dy):
+    """Convert a pixel offset to a data-coordinate offset."""
+    (x0, y0), (x1, y1) = to_data.transform([(0, 0), (dx, dy)])
+    return x1 - x0, y1 - y0
+
+
+# Draw text first, then size each box to its text with equal pixel padding.
+boxes = {}  # key -> Bbox in data coords
+for key, (x, y, kind, title, sub) in NODES.items():
+    t = ax.text(x, y, title, ha="center", va="bottom", fontsize=9,
+                fontweight="bold", color="#212121", zorder=4)
+    s = ax.text(x, y, sub, ha="center", va="top", fontsize=7.5,
+                color="#424242", zorder=4, linespacing=1.15, multialignment="center")
+    tb, sb = t.get_window_extent(renderer), s.get_window_extent(renderer)
+    # Stack title above subtitle around (x, y), then re-centre the pair vertically.
+    total = tb.height + GAP_PX + sb.height
+    _, cy = ax.transData.transform((x, y))
+    top = cy + total / 2
+    t.set_position((x, to_data.transform((0, top - tb.height))[1]))
+    s.set_position((x, to_data.transform((0, top - tb.height - GAP_PX))[1]))
+    bb = Bbox.union([t.get_window_extent(renderer), s.get_window_extent(renderer)])
+    bb = Bbox.from_extents(bb.x0 - PAD_PX, bb.y0 - PAD_PX, bb.x1 + PAD_PX, bb.y1 + PAD_PX)
+    boxes[key] = Bbox(to_data.transform(bb.get_points()))
+    fill, edge = STYLE[kind]
+    b = boxes[key]
+    ax.add_patch(FancyBboxPatch((b.x0, b.y0), b.width, b.height,
+                                boxstyle="square,pad=0",
+                                fc=fill, ec=edge, lw=2, zorder=3))
+
+
+def border_point(key, toward):
+    """Point on the box border of `key` in the direction of `toward`."""
+    b = boxes[key]
+    x, y = (b.x0 + b.x1) / 2, (b.y0 + b.y1) / 2
+    dx, dy = toward[0] - x, toward[1] - y
+    sx = (b.width / 2) / abs(dx) if dx else float("inf")
+    sy = (b.height / 2) / abs(dy) if dy else float("inf")
+    s = min(sx, sy)
+    return x + dx * s, y + dy * s
+
+
+def center(key):
+    b = boxes[key]
+    return (b.x0 + b.x1) / 2, (b.y0 + b.y1) / 2
+
+
+
+LABEL_GAP_PX = 7  # gap between a label and its own arrow
+LINE_CLEAR_PX = LABEL_GAP_PX  # same gap from every other line
+
+
+def rect_poly(b, pad=0):
+    """Display-space corners of a data Bbox, grown by `pad` pixels."""
+    (x0, y0), (x1, y1) = ax.transData.transform(b.get_points())
+    return [(x0 - pad, y0 - pad), (x1 + pad, y0 - pad), (x1 + pad, y1 + pad), (x0 - pad, y1 + pad)]
+
+
+def polys_overlap(a, b):
+    """Separating-axis test for two convex polygons."""
+    for poly in (a, b):
+        for i in range(len(poly)):
+            (x1, y1), (x2, y2) = poly[i], poly[(i + 1) % len(poly)]
+            nx, ny = y1 - y2, x2 - x1
+            pa = [nx * x + ny * y for x, y in a]
+            pb = [nx * x + ny * y for x, y in b]
+            if max(pa) < min(pb) or max(pb) < min(pa):
+                return False
+    return True
+
+
+box_polys = [rect_poly(b, LABEL_CLEAR_PX) for b in boxes.values()]
+placed = []  # rotated outlines of labels already placed
+
+
+def bezier(P0, P1, P2, t):
+    """Point and tangent of a quadratic Bezier at t (display coords)."""
+    pt = tuple((1 - t) ** 2 * a + 2 * (1 - t) * t * b + t ** 2 * c for a, b, c in zip(P0, P1, P2))
+    tan = tuple(2 * (1 - t) * (b - a) + 2 * t * (c - b) for a, b, c in zip(P0, P1, P2))
+    return pt, tan
+
+
+# Pass 1: draw every arrow and record its path, so labels can avoid all lines.
+paths = []  # (D1, C, D2, segments) in display coords
+for src, dst, label, color, dashed, rad in EDGES:
+    p1, p2 = border_point(src, center(dst)), border_point(dst, center(src))
+    ax.add_patch(FancyArrowPatch(p1, p2, arrowstyle="-|>", mutation_scale=14,
+                                 color=color, lw=1.6, ls="--" if dashed else "-",
+                                 connectionstyle=f"arc3,rad={rad}",
+                                 shrinkA=4, shrinkB=4, zorder=2))
+    # Same control point matplotlib's arc3 uses, so labels follow curved edges too.
+    D1, D2 = ax.transData.transform(p1), ax.transData.transform(p2)
+    dx, dy = D2[0] - D1[0], D2[1] - D1[1]
+    C = ((D1[0] + D2[0]) / 2 + rad * dy, (D1[1] + D2[1]) / 2 - rad * dx)
+    pts = [bezier(D1, C, D2, i / 30)[0] for i in range(31)]
+    paths.append((D1, C, D2, list(zip(pts, pts[1:]))))
+
+all_segments = [(i, seg) for i, (*_, segs) in enumerate(paths) for seg in segs]
+
+# Pass 2: place each label clear of boxes, other labels, and every line.
+for idx, ((src, dst, label, color, dashed, rad), (D1, C, D2, _)) in enumerate(zip(EDGES, paths)):
+    txt = ax.text(0, 0, label, ha="center", va="bottom", fontsize=7.5, color=color,
+                  zorder=5, linespacing=1.1, multialignment="center",
+                  rotation_mode="anchor")
+    ext = txt.get_window_extent(renderer)
+    w, h = ext.width, ext.height
+    # The text box includes room for descenders below the baseline, which reads as
+    # extra gap when the label sits above its line. Add it to labels below so the
+    # visible gap is the same on both sides.
+    txt.set_va("baseline")
+    descent = ext.y1 - txt.get_window_extent(renderer).y1
+    txt.set_va("bottom")
+
+    def outline_at(t, side, pad):
+        """Rotated label outline beside the edge at t; side=+1 above, -1 below."""
+        (px, py), (tx, ty) = bezier(D1, C, D2, t)
+        ang = math.degrees(math.atan2(ty, tx))
+        if ang > 90:
+            ang -= 180
+        elif ang <= -90:
+            ang += 180
+        a = math.radians(ang)
+        ux, uy = math.cos(a), math.sin(a)
+        nx, ny = -math.sin(a) * side, math.cos(a) * side
+        gap = LABEL_GAP_PX + (descent if side < 0 else 0)
+        bx, by = px + nx * gap, py + ny * gap
+        poly = [(bx + ux * sx * (w / 2 + pad) + nx * (sy * (h + 2 * pad) - pad),
+                 by + uy * sx * (w / 2 + pad) + ny * (sy * (h + 2 * pad) - pad))
+                for sx, sy in ((-1, 0), (1, 0), (1, 1), (-1, 1))]
+        return poly, (bx, by), ang
+
+    candidates = sorted(((i / 40, side) for i in range(4, 37) for side in (1, -1)),
+                        key=lambda c: (abs(c[0] - 0.5), -c[1]))
+    for t, side in candidates:
+        test, anchor, ang = outline_at(t, side, LINE_CLEAR_PX)
+        if (not any(polys_overlap(test, p) for p in box_polys)
+                and not any(polys_overlap(test, p) for p in placed)
+                and not any(polys_overlap(test, list(s)) for i, s in all_segments if i != idx)):
+            break
+    else:
+        print(f"warning: label {label!r} could not be placed cleanly")
+    txt.set_position(to_data.transform(anchor))
+    txt.set_rotation(ang)
+    txt.set_va("bottom" if side > 0 else "top")
+    # Store a grown outline so neighbouring labels keep a visible gap.
+    placed.append(outline_at(t, side, LABEL_CLEAR_PX)[0])
+
+handles = [Line2D([], [], marker="s", ls="", markersize=11, markerfacecolor=f,
+                  markeredgecolor=e, markeredgewidth=1.8, label=k)
+           for k, (f, e) in STYLE.items() if k in {n[2] for n in NODES.values()}]
+ax.legend(handles=handles, loc="upper center", bbox_to_anchor=(0.5, -0.04), ncol=len(handles),
+          frameon=False, fontsize=8.5, handletextpad=0.4, columnspacing=1.4)
+
+fig.savefig("architecture-diagram.png", dpi=160, facecolor="white",
+            bbox_inches="tight", pad_inches=0.2)
