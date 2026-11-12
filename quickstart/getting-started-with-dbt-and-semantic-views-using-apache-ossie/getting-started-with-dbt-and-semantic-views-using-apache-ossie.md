@@ -11,19 +11,13 @@ feedback link: https://github.com/Snowflake-Labs/sfquickstarts/issues
 
 ## Overview
 
-### The Problem
-
 When a data engineering team defines metrics like `total_revenue`, `revenue_per_item`, and `products_sold` in the dbt semantic layer, those definitions often stay locked inside dbt tooling. If an analyst queries Snowflake directly from SQL or a BI tool, or if an AI agent needs governed metrics in a Snowflake Semantic View, someone usually has to rewrite those joins, measures, and ratios by hand in a second YAML format. Maintaining the same metric in two places invites drift: one small change to a discount formula or entity join in dbt leaves the warehouse semantic view out of sync.
 
-### The Solution
+Rather than maintaining two separate semantic definitions, you can bridge them with [Apache Ossie](https://github.com/apache/ossie) (formerly Open Semantic Interchange, or OSI), a vendor-neutral specification for exchanging semantic models across analytics, BI, and AI platforms. Starting in `dbt-core` 1.12, dbt writes an Apache Ossie document (`target/osi_document.json`, spec version `0.1.1`) automatically during `dbt parse` and `dbt build`. Snowflake's built-in `SYSTEM$CREATE_SEMANTIC_VIEW_FROM_OSSIE_YAML` stored procedure then turns that document directly into a native Snowflake Semantic View, with no external converter package required.
 
-[Apache Ossie](https://github.com/apache/ossie) (formerly Open Semantic Interchange, or OSI) provides a vendor-neutral specification for exchanging semantic models across analytics, BI, and AI platforms. Starting in `dbt-core` 1.12, dbt writes an Apache Ossie document (`target/osi_document.json`, spec version `0.1.1`) automatically during `dbt parse` and `dbt build`, and Snowflake's built-in `SYSTEM$CREATE_SEMANTIC_VIEW_FROM_OSSIE_YAML` stored procedure turns that document directly into a native Snowflake Semantic View with no external converter package required.
+To see how that handoff works in practice, suppose you ask for the top five product brands in the `BUILDING` market segment by total revenue, revenue per item, and distinct products sold. In this guide, you build a star schema over the `SNOWFLAKE_SAMPLE_DATA.TPCH_SF1` dataset in dbt (`fct_order_items`, `dim_customers`, and `dim_products`), declare four metrics in `models/marts/_semantic_models.yml`, and run `dbt build` so dbt both materializes the tables in Snowflake and writes `target/osi_document.json`. You then run a single dbt macro (`publish_semantic_view`) that uploads `target/osi_document.json` to a temporary Snowflake stage and calls `SYSTEM$CREATE_SEMANTIC_VIEW_FROM_OSSIE_YAML` to publish `ANALYTICS.DEMO.SV_ORDERS`. Querying `SV_ORDERS` with `AGG(total_revenue)` and `AGG(products_sold)` returns `Brand#52` at the top with `165,202,705.9201` in total revenue and `3,458` products sold, matching the underlying tables without duplicating a single metric definition.
 
-### What It Looks Like in Practice
-
-Suppose you ask for the top five product brands in the `BUILDING` market segment by total revenue, revenue per item, and distinct products sold. In this guide, you build a star schema over the `SNOWFLAKE_SAMPLE_DATA.TPCH_SF1` dataset in dbt (`fct_order_items`, `dim_customers`, and `dim_products`), declare four metrics in `models/marts/_semantic_models.yml`, and run `dbt build` so dbt both materializes the tables in Snowflake and writes `target/osi_document.json`. You then run a single dbt macro (`publish_semantic_view`) that uploads `target/osi_document.json` to a temporary Snowflake stage and calls `SYSTEM$CREATE_SEMANTIC_VIEW_FROM_OSSIE_YAML` to publish `ANALYTICS.DEMO.SV_ORDERS`. Querying `SV_ORDERS` with `AGG(total_revenue)` and `AGG(products_sold)` returns `Brand#52` at the top with `165,202,705.9201` in total revenue and `3,458` products sold, matching the underlying tables without duplicating a single metric definition.
-
-With the end-to-end flow in place, here is what you will learn along the way.
+With that end-to-end flow in mind, here are the specific skills you will cover along the way.
 
 ### What You'll Learn
 
@@ -37,9 +31,19 @@ Those learning goals map directly to the objects you will create in your environ
 
 ### What You'll Build
 
-By the end of this guide, you will have a working `quickstart-dbt-snowflake-ossie` dbt project and the following Snowflake objects in `ANALYTICS.DEMO`:
+By the end of this guide, you will have an end-to-end dbt-to-Snowflake semantic pipeline deployed in `ANALYTICS.DEMO` that transforms raw TPC-H order data into a star schema, exports its dbt semantic layer definitions as an Apache Ossie `0.1.1` document, and publishes them as the `SV_ORDERS` Snowflake Semantic View.
 
 ![Architecture diagram of the dbt to Snowflake Semantic View pipeline using Apache Ossie](assets/architecture-diagram.png)
+
+As shown in the architecture diagram above, the pipeline flows from left to right across five stages:
+
+1. **Source tables (`SNOWFLAKE_SAMPLE_DATA.TPCH_SF1`):** Five shared TPC-H tables (`ORDERS`, `LINEITEM`, `CUSTOMER`, `NATION`, and `PART`) supply the raw order, customer, and product records.
+2. **Staging views (`models/staging/`):** Four views (`STG_ORDERS`, `STG_LINEITEM`, `STG_CUSTOMERS`, and `STG_PRODUCTS`) filter orders to `1998-01-01` onward, join customers with their nation names, and standardize column names.
+3. **Star-schema mart tables (`models/marts/`):** `dbt build` materializes the order-item fact table (`FCT_ORDER_ITEMS`), two dimension tables (`DIM_CUSTOMERS` and `DIM_PRODUCTS`), and the daily time spine table (`METRICFLOW_TIME_SPINE`) in `ANALYTICS.DEMO`.
+4. **Apache Ossie handoff (`OSI_DOCUMENT.JSON` and `SYSTEM$CREATE_SEMANTIC_VIEW_FROM_OSSIE_YAML`):** During the same build, `dbt-core` parses `models/marts/_semantic_models.yml` and writes `target/osi_document.json` (Ossie spec `0.1.1`). The `publish_semantic_view` macro stages that JSON file in `@OSSIE_PUBLISH`, sets the target view name, and passes it to `SYSTEM$CREATE_SEMANTIC_VIEW_FROM_OSSIE_YAML`.
+5. **Snowflake Semantic View (`SV_ORDERS`):** Snowflake creates `ANALYTICS.DEMO.SV_ORDERS` with four governed metrics (`total_revenue`, `item_count`, `revenue_per_item`, and `products_sold`) that resolve `AGG()` SQL queries directly against the star-schema tables.
+
+The table below summarizes each project path and Snowflake object in the pipeline:
 
 | Path or Object | Role in the Pipeline |
 |---|---|
@@ -49,7 +53,7 @@ By the end of this guide, you will have a working `quickstart-dbt-snowflake-ossi
 | `macros/publish_semantic_view.sql` | A dbt macro that uploads `target/osi_document.json` to a temporary stage, sets the target view name, and calls `SYSTEM$CREATE_SEMANTIC_VIEW_FROM_OSSIE_YAML`. |
 | `ANALYTICS.DEMO.SV_ORDERS` | The published Snowflake Semantic View, ready to query with standard Snowflake SQL (`AGG()`). |
 
-Before you start building, verify that your local machine and Snowflake account meet the prerequisites below.
+With the end result in mind, check that your local machine and Snowflake account meet the prerequisites below.
 
 ### What You'll Need
 
@@ -58,11 +62,11 @@ Before you start building, verify that your local machine and Snowflake account 
 - Python 3.12 installed locally (tested with `uv`; standard `venv` also works)
 - Only two Python packages: `dbt-core==1.12.6` and `dbt-snowflake==1.12.5` (MetricFlow `0.213.0` is installed automatically; no separate Ossie package or converter is needed)
 
-Once you have those prerequisites ready, you can set up the target schema in Snowflake and scaffold the local dbt project.
+Once you have those prerequisites ready, the first step is to create the target schema in Snowflake and scaffold the local dbt project.
 
 ## Setup
 
-This section prepares the target database and schema in Snowflake, gives you a single copy-pastable script to create all project files at once, and configures your Python 3.12 virtual environment.
+You start by preparing `ANALYTICS.DEMO` in Snowflake, then create the local project files and configure your Python virtual environment.
 
 ### Create Target Database and Schema
 
@@ -75,17 +79,17 @@ CREATE SCHEMA IF NOT EXISTS analytics.demo;
 
 **Check:** Verify that `ANALYTICS.DEMO` appears in your Snowsight object explorer.
 
-With the Snowflake schema ready, you can now create the local project files.
+With the Snowflake schema in place, you can create the local dbt project files.
 
 ### Scaffold the Project Files in One Step
 
-Every file in `quickstart-dbt-snowflake-ossie` is shown individually in the sections that follow so you can see how each layer works. To create the entire project directory and all 14 files in one step first, open your terminal and paste the following shell block:
+Every file in the `dbt-ossie-demo` project is shown individually in the sections that follow so you can see how each layer works. To create the entire project directory and all 14 files in one step first, open your terminal and paste the following shell block:
 
 ```bash
-mkdir -p quickstart-dbt-snowflake-ossie/macros \
-         quickstart-dbt-snowflake-ossie/models/staging \
-         quickstart-dbt-snowflake-ossie/models/marts
-cd quickstart-dbt-snowflake-ossie
+mkdir -p dbt-ossie-demo/macros \
+         dbt-ossie-demo/models/staging \
+         dbt-ossie-demo/models/marts
+cd dbt-ossie-demo
 
 cat << 'EOF' > requirements.txt
 # Minimal set for dbt -> Ossie -> Snowflake semantic views (tested Oct. 16, 2026).
@@ -358,13 +362,13 @@ cat << 'EOF' > macros/publish_semantic_view.sql
 EOF
 ```
 
-With the files on disk, the next step is to install the Python packages and set your Snowflake connection variables.
+With the project files on disk, the next step is to install the Python packages and set your Snowflake connection variables.
 
 ### Configure Python and Environment Variables
 
 The project configuration lives in `requirements.txt`, `dbt_project.yml`, and `profiles.yml`. Notice that `dbt_project.yml` materializes `staging` models as views and `marts` models as tables, while `profiles.yml` reads every Snowflake setting from environment variables.
 
-To create the Python 3.12 virtual environment, install `dbt-core` and `dbt-snowflake`, and export your Snowflake connection settings, run the following commands inside `quickstart-dbt-snowflake-ossie`:
+To create the Python 3.12 virtual environment, install `dbt-core` and `dbt-snowflake`, and export your Snowflake connection settings, run the following commands inside `dbt-ossie-demo`:
 
 ```bash
 uv venv --python 3.12 .venv
@@ -384,11 +388,11 @@ If you prefer standard `venv` instead of `uv`, run `python3.12 -m venv .venv && 
 
 **Check:** Run `dbt --version` and confirm that `dbt-core` `1.12.6` and `dbt-snowflake` `1.12.5` are active.
 
-Now that the environment is configured, let's examine how the staging layer prepares the raw TPC-H tables.
+With the environment configured and connected to Snowflake, you can examine how the staging layer prepares the raw TPC-H tables.
 
 ## Build Staging Models
 
-The staging layer in `models/staging/` points to `SNOWFLAKE_SAMPLE_DATA.TPCH_SF1` and exposes clean column names across four views.
+The staging layer in `models/staging/` reads from `SNOWFLAKE_SAMPLE_DATA.TPCH_SF1` and exposes clean column names across four views, starting with the source declaration.
 
 ### Define the TPC-H Source
 
@@ -409,7 +413,7 @@ sources:
       - name: nation
 ```
 
-With the source tables declared, four SQL models clean and rename their columns.
+With the five source tables declared, four SQL models filter and rename their columns.
 
 ### Review the Staging Views
 
@@ -466,11 +470,11 @@ select
 from {{ source('tpch', 'part') }}
 ```
 
-Those four staging views feed the star schema tables in `models/marts/`.
+Those four staging views provide the clean inputs needed to build the star-schema tables in `models/marts/`.
 
 ## Build Star Schema
 
-The marts layer turns the staging views into a fact table at the order-item grain, two dimension tables, and a daily time spine table for MetricFlow.
+The marts layer materializes a fact table at the order-item grain and two dimension tables, followed by a daily time spine table for MetricFlow.
 
 ### Create the Fact and Dimension Tables
 
@@ -517,7 +521,7 @@ select
 from {{ ref('stg_products') }}
 ```
 
-In addition to the fact and dimension tables, MetricFlow requires a daily time spine table to validate the semantic layer.
+Alongside the fact and dimension tables, MetricFlow requires a daily time spine table to validate time-based dimensions in the semantic layer.
 
 ### Add the MetricFlow Time Spine
 
@@ -551,11 +555,11 @@ models:
         granularity: day
 ```
 
-With the star schema and time spine in place, you can define the semantic models and metrics on top of them.
+Now that the star schema and time spine are defined, you can layer semantic models and metrics on top of them.
 
 ## Define Semantic Layer
 
-The semantic layer definition in `models/marts/_semantic_models.yml` maps the three mart tables to semantic models and defines four metrics. Running `dbt build` then materializes the warehouse objects and writes `target/osi_document.json`.
+In `models/marts/_semantic_models.yml`, you connect the three mart tables through primary and foreign entities and declare four business metrics.
 
 ### Review the Semantic Models and Metrics
 
@@ -627,11 +631,11 @@ metrics:
       measure: distinct_parts
 ```
 
-With the semantic models and metrics defined, you are ready to build the dbt project and generate the Apache Ossie document.
+With the semantic models and metrics defined in YAML, you are ready to build the dbt project and emit the Apache Ossie document.
 
 ### Build the Models and Generate the Ossie Document
 
-To materialize the staging views and mart tables in Snowflake and emit `target/osi_document.json`, run `dbt build` from the `quickstart-dbt-snowflake-ossie` directory:
+To materialize the staging views and mart tables in Snowflake and emit `target/osi_document.json`, run `dbt build` from the `dbt-ossie-demo` directory:
 
 ```bash
 dbt build --profiles-dir .
@@ -639,11 +643,11 @@ dbt build --profiles-dir .
 
 **Check:** Confirm that `dbt build` completes without errors, that `FCT_ORDER_ITEMS`, `DIM_CUSTOMERS`, `DIM_PRODUCTS`, and `METRICFLOW_TIME_SPINE` exist in `ANALYTICS.DEMO`, and that `target/osi_document.json` has been written locally.
 
-Now that `target/osi_document.json` exists on disk, the next step publishes it as a Snowflake Semantic View.
+With the warehouse tables materialized and `target/osi_document.json` written locally, the next step is to publish that document into Snowflake as a Semantic View.
 
 ## Publish Semantic View
 
-Publishing the Apache Ossie document to Snowflake is handled by a dbt macro in `macros/publish_semantic_view.sql` that stages `target/osi_document.json`, sets the target semantic view name, and calls `SYSTEM$CREATE_SEMANTIC_VIEW_FROM_OSSIE_YAML`.
+A custom dbt macro in `macros/publish_semantic_view.sql` handles the handoff from `target/osi_document.json` to `SYSTEM$CREATE_SEMANTIC_VIEW_FROM_OSSIE_YAML`.
 
 ### Review the Publish Macro
 
@@ -699,7 +703,7 @@ That completes the core build and publish workflow. Next, you query the publishe
 
 ## Query Semantic View
 
-Once `ANALYTICS.DEMO.SV_ORDERS` is published, you can query its dimensions and metrics directly in Snowflake SQL using the `AGG()` function.
+Because `ANALYTICS.DEMO.SV_ORDERS` is now a native Snowflake object, you can query its dimensions and metrics directly in SQL using the `AGG()` function.
 
 ### Run a Semantic View Query
 
@@ -719,7 +723,7 @@ SELECT brand,
 
 **Check:** Confirm that the top row is `Brand#52` with `total_revenue` of `165,202,705.9201` and `products_sold` of `3,458`. These numbers match the same query written directly against `fct_order_items`, `dim_customers`, and `dim_products`.
 
-When you adapt this pattern to your own dbt semantic models, keep the following guidelines in mind.
+The query confirms that your dbt metrics resolve accurately in Snowflake. Before you adapt this pattern to your own dbt projects, review the modeling guidelines below.
 
 ### Modeling Guidelines Worth Knowing
 
@@ -730,7 +734,7 @@ When you adapt this pattern to your own dbt semantic models, keep the following 
 - **Windowed metrics:** dbt flattens cumulative metrics to a plain `SUM` in `target/osi_document.json`, and the Snowflake Ossie loader does not accept window specifications. Define rolling windows in the Snowflake Semantic View directly.
 - **Privileges for the load:** Your role needs `CREATE SEMANTIC VIEW` on the target schema, `SELECT` on each source table, and `OWNERSHIP` of any existing semantic view with the same name to replace it.
 
-When you finish testing the semantic view, you can remove the demo objects from your Snowflake account.
+Once you finish exploring the semantic view, you can remove the demo objects from your Snowflake account.
 
 ## Clean Up
 
@@ -741,7 +745,7 @@ DROP SEMANTIC VIEW IF EXISTS analytics.demo.sv_orders;
 DROP SCHEMA IF EXISTS analytics.demo;
 ```
 
-With the demo resources cleaned up, let's recap what you accomplished and where to go next.
+With the demo resources cleaned up, here is a summary of what you built and where to explore further.
 
 ## Conclusion And Resources
 
@@ -753,6 +757,8 @@ Congratulations! You've successfully built a star schema in dbt over TPC-H data,
 - How to model primary and foreign entities, dimensions, measures, and simple and ratio metrics in `models/marts/_semantic_models.yml` so they map cleanly to Snowflake
 - How to stage `target/osi_document.json`, override the semantic model name, and publish a Snowflake Semantic View in place with `SYSTEM$CREATE_SEMANTIC_VIEW_FROM_OSSIE_YAML`
 - How to query a Snowflake Semantic View with `AGG()` and work within the current Ossie `0.1.1` loader guidelines
+
+To dive deeper into Apache Ossie, Snowflake Semantic Views, and the dbt semantic layer, explore the resources below.
 
 ### Related Resources
 
