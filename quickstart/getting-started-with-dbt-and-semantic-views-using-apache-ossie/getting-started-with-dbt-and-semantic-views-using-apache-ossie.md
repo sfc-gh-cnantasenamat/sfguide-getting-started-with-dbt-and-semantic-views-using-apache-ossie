@@ -58,9 +58,9 @@ With the end result in mind, check that your local machine and Snowflake account
 ### What You'll Need
 
 - Access to a [Snowflake account](https://signup.snowflake.com/?utm_source=snowflake-devrel&utm_medium=developer-guides&utm_cta=developer-guides)
-- A Snowflake role that can read `SNOWFLAKE_SAMPLE_DATA`, use a warehouse, and create tables, views, stages, and semantic views in a target schema (`CREATE SEMANTIC VIEW` on the schema, `SELECT` on each source table, and `OWNERSHIP` of an existing semantic view with the same name when replacing it)
-- Python 3.12 installed locally (tested with `uv`; standard `venv` also works)
-- Only two Python packages: `dbt-core==1.12.6` and `dbt-snowflake==1.12.5` (MetricFlow `0.213.0` is installed automatically; no separate Ossie package or converter is needed)
+- A Snowflake role such as `ACCOUNTADMIN` (or any role that can read `SNOWFLAKE_SAMPLE_DATA`, use a warehouse, and create databases, schemas, tables, views, stages, and semantic views)
+- Python 3.11 or 3.12 installed locally (`uv` or standard `venv` both work)
+- Only two Python packages: `dbt-core==1.12.6` and `dbt-snowflake==1.12.5` (dbt's semantic layer engine, MetricFlow `0.213.0`, is installed automatically with `dbt-core`; no separate Ossie package or converter is needed)
 
 Once you have those prerequisites ready, the first step is to create the target schema in Snowflake and scaffold the local dbt project.
 
@@ -423,7 +423,7 @@ dbt_ossie_demo:
       client_session_keep_alive: false
 ```
 
-**Run this step:** In your terminal (inside `dbt-ossie-demo`), run the following commands to create the Python 3.12 virtual environment, install `dbt-core` and `dbt-snowflake`, and export your Snowflake connection settings:
+**Run this step:** In your terminal (inside `dbt-ossie-demo`), run the following commands to create the Python virtual environment, install `dbt-core` and `dbt-snowflake`, and export your Snowflake connection settings:
 
 ```bash
 uv venv --python 3.12 .venv
@@ -439,7 +439,12 @@ export SNOWFLAKE_SCHEMA=DEMO             # default
 # export SNOWFLAKE_AUTHENTICATOR=...     # defaults to externalbrowser
 ```
 
-If you prefer standard `venv` instead of `uv`, run `python3.12 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt`.
+If you prefer standard `venv` instead of `uv`, run `python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt`.
+
+Replace the four angle-bracket placeholders with your Snowflake details:
+- `SNOWFLAKE_ACCOUNT`: Your `<orgname>-<accountname>` identifier (found in the bottom-left account menu in Snowsight, without `.snowflakecomputing.com`).
+- `SNOWFLAKE_USER`, `SNOWFLAKE_ROLE`, and `SNOWFLAKE_WAREHOUSE`: Your Snowflake username, role (such as `ACCOUNTADMIN`), and an active warehouse name.
+- By default, `profiles.yml` uses `externalbrowser` authentication, which opens a browser tab for Single Sign-On (SSO) when you run a dbt command.
 
 **Check:** Run `dbt --version` and confirm that `dbt-core` `1.12.6` and `dbt-snowflake` `1.12.5` are active.
 
@@ -533,7 +538,7 @@ The setup script also created the five mart files in `models/marts/`. As with th
 
 ### Inspect Fact and Dimension Models
 
-`models/marts/fct_order_items.sql` joins `stg_orders` and `stg_lineitem`, constructs a single-column surrogate key `order_item_key` (`o.order_key || '-' || l.line_number`) required by MetricFlow as the primary entity column, and computes `net_revenue` and `discount_amount`:
+In raw TPC-H data, a line item is uniquely identified by two columns (`order_key` and `line_number`). Because the dbt semantic layer requires a single column to serve as a table's primary key (`primary` entity), `models/marts/fct_order_items.sql` joins `stg_orders` and `stg_lineitem`, concatenates `o.order_key || '-' || l.line_number` into a single `order_item_key` surrogate key, and computes `net_revenue` and `discount_amount`:
 
 ```sql
 -- Fact table at order-item grain. Surrogate key is order_key + line_number,
@@ -578,11 +583,11 @@ select
 from {{ ref('stg_products') }}
 ```
 
-Alongside the fact and dimension tables, MetricFlow requires a daily time spine table to validate time-based dimensions in the semantic layer.
+Even when your queries do not group by date, dbt's semantic layer engine (MetricFlow) requires a daily calendar table, called a time spine, in the project before it will validate and export any semantic model.
 
 ### Inspect the Time Spine
 
-`models/marts/metricflow_time_spine.sql` uses Snowflake's `GENERATOR` table function to generate one row per day from `1990-01-01` through `2044-12-31`:
+`models/marts/metricflow_time_spine.sql` uses Snowflake's `GENERATOR` table function to generate one calendar row per day from `1990-01-01` through `2044-12-31`:
 
 ```sql
 -- MetricFlow requires a daily time spine to resolve time-based and
@@ -620,7 +625,7 @@ In this section, you first inspect `models/marts/_semantic_models.yml` (already 
 
 ### Inspect Semantic Models and Metrics
 
-Review `models/marts/_semantic_models.yml` below (no action required) to see how it defines three semantic models (`order_items`, `customers`, and `products`) and four metrics (`total_revenue`, `item_count`, `revenue_per_item`, and `products_sold`). Notice that each entity is named after its key column (`order_item_key`, `customer_key`, `part_key`) so that relationships and the `COUNT` measure resolve cleanly when imported into Snowflake:
+Review `models/marts/_semantic_models.yml` below (no action required) to see how it connects the three mart tables and defines four business metrics:
 
 ```yaml
 semantic_models:
@@ -688,6 +693,12 @@ metrics:
       measure: distinct_parts
 ```
 
+Notice how the four building blocks in `_semantic_models.yml` map to your Snowflake Semantic View:
+- **Entities (`primary` and `foreign`):** Define the join keys across tables. Naming each entity after its key column (`order_item_key`, `customer_key`, and `part_key`) lets Snowflake resolve the joins from `fct_order_items` to `dim_customers` and `dim_products` automatically.
+- **Dimensions (`time` and `categorical`):** Expose attributes you can group or filter by (`order_date`, `market_segment`, and `brand`).
+- **Measures (`sum`, `count`, and `count_distinct`):** Define raw column aggregations on the `order_items` fact table (`net_revenue`, `line_count`, and `distinct_parts`).
+- **Metrics (`simple` and `ratio`):** Turn those measures into governed business KPIs: three `simple` metrics (`total_revenue`, `item_count`, and `products_sold`) and one `ratio` metric (`revenue_per_item`, which divides `total_revenue` by `item_count`).
+
 With the staging, mart, and semantic layer definitions reviewed, you are ready to execute the build.
 
 ### Run dbt Build
@@ -698,7 +709,7 @@ With the staging, mart, and semantic layer definitions reviewed, you are ready t
 dbt build --profiles-dir .
 ```
 
-**Check:** Confirm that `dbt build` completes without errors (`PASS=8`), that `FCT_ORDER_ITEMS`, `DIM_CUSTOMERS`, `DIM_PRODUCTS`, and `METRICFLOW_TIME_SPINE` exist in `ANALYTICS.DEMO`, and that `target/osi_document.json` has been written locally.
+**Check:** Confirm that `dbt build` completes without errors (`PASS=8`), that `FCT_ORDER_ITEMS`, `DIM_CUSTOMERS`, `DIM_PRODUCTS`, and `METRICFLOW_TIME_SPINE` exist in `ANALYTICS.DEMO`, and that `target/osi_document.json` has been written locally (you can run `ls -lh target/osi_document.json` to verify).
 
 With the warehouse tables materialized and `target/osi_document.json` written locally, the next step is to publish that document into Snowflake as a Semantic View.
 
@@ -708,7 +719,7 @@ A custom dbt macro in `macros/publish_semantic_view.sql` (created by the setup s
 
 ### Inspect the Publish Macro
 
-Review `macros/publish_semantic_view.sql` below (no action required) to see how it works. When dbt writes `target/osi_document.json`, it always sets `semantic_model[0].name` to `"semantic_model"`. The macro uploads `target/osi_document.json` to a temporary JSON stage (`ANALYTICS.DEMO.OSSIE_PUBLISH`), uses `OBJECT_INSERT` to replace `semantic_model[0].name` with your chosen `view_name`, and passes the JSON document to `SYSTEM$CREATE_SEMANTIC_VIEW_FROM_OSSIE_YAML`:
+Review `macros/publish_semantic_view.sql` below (no action required) to see how it works:
 
 ```sql
 {#-
@@ -742,6 +753,11 @@ Review `macros/publish_semantic_view.sql` below (no action required) to see how 
 {% endmacro %}
 ```
 
+When executed, the macro performs three steps inside Snowflake:
+1. Creates a temporary JSON stage (`ANALYTICS.DEMO.OSSIE_PUBLISH`) and uploads `target/osi_document.json` using `PUT`.
+2. Rewrites `semantic_model[0].name` from dbt's hardcoded default (`"semantic_model"`) to your chosen `view_name` using `OBJECT_INSERT`.
+3. Calls `SYSTEM$CREATE_SEMANTIC_VIEW_FROM_OSSIE_YAML('ANALYTICS.DEMO', :doc)` to create or replace the semantic view.
+
 Now that you have seen what the macro does, run it to create the Semantic View in Snowflake.
 
 ### Run the Publish Operation
@@ -764,6 +780,8 @@ Because `ANALYTICS.DEMO.SV_ORDERS` is now a native Snowflake object, you can que
 
 ### Run a Semantic View Query
 
+Notice that in the query below, `brand` comes from `DIM_PRODUCTS`, `market_segment` comes from `DIM_CUSTOMERS`, and the three metrics come from `FCT_ORDER_ITEMS`. Because `SV_ORDERS` already stores the entity relationships and metric formulas from your Apache Ossie document, you query `analytics.demo.sv_orders` directly with `AGG()` without writing any `JOIN` clauses or ratio calculations.
+
 **Run this step:** Open your Snowsight SQL worksheet and run the following query to compute `total_revenue`, `revenue_per_item`, and `products_sold` by `brand` for customers in the `BUILDING` market segment:
 
 ```sql
@@ -778,7 +796,15 @@ SELECT brand,
  LIMIT 5;
 ```
 
-**Check:** Confirm that the top row is `Brand#52` with `total_revenue` of `165,202,705.9201` and `products_sold` of `3,458`. These numbers match the same query written directly against `fct_order_items`, `dim_customers`, and `dim_products`.
+**Check:** Confirm that the query returns the five rows below, with `Brand#52` at the top (`165,202,705.9201` in total revenue and `3,458` products sold), matching the exact numbers you would get by joining `fct_order_items`, `dim_customers`, and `dim_products` manually:
+
+| BRAND | TOTAL_REVENUE | REVENUE_PER_ITEM | PRODUCTS_SOLD |
+|---|---|---|---|
+| `Brand#52` | `165202705.9201` | `36364.2319876954` | `3458` |
+| `Brand#12` | `162858632.9205` | `36458.1672085292` | `3397` |
+| `Brand#53` | `162164279.9846` | `36278.3624126622` | `3411` |
+| `Brand#21` | `160949289.0776` | `36529.5708301407` | `3411` |
+| `Brand#45` | `159970306.2905` | `36315.6200432463` | `3405` |
 
 The query confirms that your dbt metrics resolve accurately in Snowflake. Before you adapt this pattern to your own dbt projects, review the modeling guidelines below.
 
