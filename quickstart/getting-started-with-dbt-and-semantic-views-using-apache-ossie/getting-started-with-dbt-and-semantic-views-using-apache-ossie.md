@@ -68,11 +68,11 @@ Once you have those prerequisites ready, the first step is to create the target 
 
 The diagram below outlines the five practical steps you will execute across Snowsight and your local terminal:
 
-- **1. Prepare schema (`1. PREPARE SCHEMA`):** Create the `ANALYTICS` database and `ANALYTICS.DEMO` schema in Snowsight.
-- **2. Scaffold and configure (`2. SCAFFOLD & CONFIGURE`):** Create the local `dbt-ossie-demo` project files, install `dbt-core` and `dbt-snowflake` in a Python virtual environment, and export your Snowflake connection variables.
-- **3. Run dbt build (`3. RUN DBT BUILD`):** After reviewing the staging, mart, and semantic layer files, run `dbt build` to materialize all eight warehouse models in `ANALYTICS.DEMO` and emit `target/osi_document.json`.
-- **4. Publish semantic view (`4. PUBLISH SEMANTIC VIEW`):** Run the `publish_semantic_view` macro to stage `target/osi_document.json` and create `ANALYTICS.DEMO.SV_ORDERS`.
-- **5. Query with AGG() (`5. QUERY WITH AGG()`):** Query the published Semantic View in Snowsight SQL using `AGG()`.
+1. **Prepare schema:** Create the `ANALYTICS` database and `ANALYTICS.DEMO` schema in Snowsight.
+2. **Scaffold and configure:** Create the local `dbt-ossie-demo` project files, install `dbt-core` and `dbt-snowflake` in a Python virtual environment, and export your Snowflake connection variables.
+3. **Run dbt build:** After reviewing the staging, mart, and semantic layer files, run `dbt build` to materialize all eight warehouse models in `ANALYTICS.DEMO` and emit `target/osi_document.json`.
+4. **Publish semantic view:** Run the `publish_semantic_view` macro to stage `target/osi_document.json` and create `ANALYTICS.DEMO.SV_ORDERS`.
+5. **Query with AGG():** Query the published Semantic View in Snowsight SQL using `AGG()`.
 
 ![Workflow diagram of the five hands-on steps in this guide](assets/workflow-diagram.png)
 
