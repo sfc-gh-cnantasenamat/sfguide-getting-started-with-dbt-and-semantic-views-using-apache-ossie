@@ -366,7 +366,60 @@ With the project files on disk, the next step is to install the Python packages 
 
 ### Configure Python and Environment Variables
 
-The project configuration lives in `requirements.txt`, `dbt_project.yml`, and `profiles.yml`. Notice that `dbt_project.yml` materializes `staging` models as views and `marts` models as tables, while `profiles.yml` reads every Snowflake setting from environment variables.
+The root configuration of `dbt-ossie-demo` lives in three files created by the setup script above.
+
+`requirements.txt` pins `dbt-core` and `dbt-snowflake` so `dbt parse` and `dbt build` write `target/osi_document.json` without any separate Ossie converter package:
+
+```text
+# Minimal set for dbt -> Ossie -> Snowflake semantic views (tested Oct. 16, 2026).
+# dbt-core writes target/osi_document.json during parse; dbt-snowflake is the adapter
+# that parse requires for a snowflake profile, and it builds the tables and runs the publish macro.
+# No Apache Ossie package or converter is needed on this path.
+dbt-core==1.12.6
+dbt-snowflake==1.12.5
+```
+
+`dbt_project.yml` configures the `dbt_ossie_demo` project to materialize `staging` models as views and `marts` models as tables:
+
+```yaml
+name: dbt_ossie_demo
+version: "1.0.0"
+config-version: 2
+
+profile: dbt_ossie_demo
+
+model-paths: ["models"]
+target-path: "target"
+clean-targets: ["target", "dbt_packages"]
+
+models:
+  dbt_ossie_demo:
+    staging:
+      +materialized: view
+    marts:
+      +materialized: table
+```
+
+`profiles.yml` reads every Snowflake connection setting from environment variables, defaulting `database` to `ANALYTICS`, `schema` to `DEMO`, and `authenticator` to `externalbrowser`:
+
+```yaml
+dbt_ossie_demo:
+  target: dev
+  outputs:
+    dev:
+      type: snowflake
+      account: "{{ env_var('SNOWFLAKE_ACCOUNT') }}"
+      user: "{{ env_var('SNOWFLAKE_USER') }}"
+      # Browser SSO by default. Set SNOWFLAKE_AUTHENTICATOR to another value
+      # (for example oauth_authorization_code) if your account requires it.
+      authenticator: "{{ env_var('SNOWFLAKE_AUTHENTICATOR', 'externalbrowser') }}"
+      role: "{{ env_var('SNOWFLAKE_ROLE') }}"
+      warehouse: "{{ env_var('SNOWFLAKE_WAREHOUSE') }}"
+      database: "{{ env_var('SNOWFLAKE_DATABASE', 'ANALYTICS') }}"
+      schema: "{{ env_var('SNOWFLAKE_SCHEMA', 'DEMO') }}"
+      threads: 8
+      client_session_keep_alive: false
+```
 
 To create the Python 3.12 virtual environment, install `dbt-core` and `dbt-snowflake`, and export your Snowflake connection settings, run the following commands inside `dbt-ossie-demo`:
 
@@ -500,7 +553,7 @@ join {{ ref('stg_lineitem') }} l
     on o.order_key = l.order_key
 ```
 
-`models/marts/dim_customers.sql` and `models/marts/dim_products.sql` materialize the customer and product dimensions as tables:
+`models/marts/dim_customers.sql` materializes the customer dimension table with `customer_key`, `customer_name`, `market_segment`, and `nation`:
 
 ```sql
 select
@@ -510,6 +563,8 @@ select
     nation
 from {{ ref('stg_customers') }}
 ```
+
+`models/marts/dim_products.sql` materializes the product dimension table with `part_key`, `product_name`, `brand`, `manufacturer`, and `product_type`:
 
 ```sql
 select
