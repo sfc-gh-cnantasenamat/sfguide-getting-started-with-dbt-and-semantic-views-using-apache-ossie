@@ -66,13 +66,17 @@ Once you have those prerequisites ready, the first step is to create the target 
 
 ## Setup
 
-The diagram below outlines the five practical steps you will execute across Snowsight and your local terminal.
+The diagram below outlines the five practical steps you will execute across Snowsight and your local terminal:
 
-In this Setup section, you complete the first two steps: preparing `ANALYTICS.DEMO` in Snowsight (`1. PREPARE SCHEMA`) and scaffolding and configuring the local dbt project (`2. SCAFFOLD & CONFIGURE`). After reviewing the models in the middle sections, you will run `dbt build` (`3. RUN DBT BUILD`), publish the semantic view (`4. PUBLISH SEMANTIC VIEW`), and query it in SQL (`5. QUERY WITH AGG()`).
+- **1. Prepare schema (`1. PREPARE SCHEMA`):** Create the `ANALYTICS` database and `ANALYTICS.DEMO` schema in Snowsight.
+- **2. Scaffold and configure (`2. SCAFFOLD & CONFIGURE`):** Create the local `dbt-ossie-demo` project files, install `dbt-core` and `dbt-snowflake` in a Python virtual environment, and export your Snowflake connection variables.
+- **3. Run dbt build (`3. RUN DBT BUILD`):** After reviewing the staging, mart, and semantic layer files, run `dbt build` to materialize all eight warehouse models in `ANALYTICS.DEMO` and emit `target/osi_document.json`.
+- **4. Publish semantic view (`4. PUBLISH SEMANTIC VIEW`):** Run the `publish_semantic_view` macro to stage `target/osi_document.json` and create `ANALYTICS.DEMO.SV_ORDERS`.
+- **5. Query with AGG() (`5. QUERY WITH AGG()`):** Query the published Semantic View in Snowsight SQL using `AGG()`.
 
 ![Workflow diagram of the five hands-on steps in this guide](assets/workflow-diagram.png)
 
-Let's start with Step 1 in Snowsight.
+In this Setup section, you complete the first two steps, starting with Step 1 in Snowsight.
 
 ### Create Target Database and Schema
 
